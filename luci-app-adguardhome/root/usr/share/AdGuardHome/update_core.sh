@@ -66,6 +66,8 @@ Check_Updates(){
 	[[ -z ${Current_Version} ]] && Current_Version="未知"
 	echo -e "\n执行文件: ${binpath}\n正在检查更新, 请耐心等待 ..."
 	echo -e "\n当前 AdGuardHome 版本: ${Current_Version}\n云端 AdGuardHome 版本: ${Cloud_Version}"
+	CurArch=$(GET_Arch)
+	uci set AdGuardHome.AdGuardHome.update_url="https://github.com/AdguardTeam/AdGuardHome/releases/download/${Cloud_Version}/AdGuardHome_linux_${CurArch}.tar.gz" 
 	if [[ ! "${Cloud_Version}" == "${Current_Version}" || "$1" == force ]]; then
 		Update_Core
 	else

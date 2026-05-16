@@ -79,7 +79,7 @@ Check_Updates(){
 
 UPX_Compress(){
 	Arch_upx=$(GET_Arch )
-         # https://github.com/upx/upx/releases/download/v5.0.0/upx-5.0.0-amd64_linux.tar.xz
+	# https://github.com/upx/upx/releases/download/v5.0.0/upx-5.0.0-amd64_linux.tar.xz
 	upx_latest_ver="$(${_Downloader} https://api.github.com/repos/upx/upx/releases/latest 2>/dev/null | grep -E 'tag_name' | grep -E  '[0-9.]+' -o 2>/dev/null)"
 	upx_name="upx-${upx_latest_ver}-${Arch_upx}_linux.tar.xz"
 	echo -e "开始下载 ${upx_name} ...\n"
@@ -90,7 +90,18 @@ UPX_Compress(){
 	else
 		echo -e "\n${upx_name} 下载成功!\n" 
 	fi
-	which xz > /dev/null 2>&1 || (opkg list | grep ^xz || opkg update > /dev/null 2>&1 && opkg install xz --force-depends) || (echo "软件包 xz 安装失败!" && EXIT 1)
+
+	if ! which xz > /dev/null 2>&1; then
+		if command -v apk > /dev/null 2>&1; then
+			echo -e "使用 apk 安装 xz ...\n"
+			apk update > /dev/null 2>&1
+			apk add xz || { echo -e "软件包 xz 安装失败!\n"; EXIT 1; }
+		else
+			echo -e "使用 opkg 安装 xz ...\n"
+			(opkg list | grep ^xz || opkg update > /dev/null 2>&1) && opkg install xz --force-depends || { echo -e "软件包 xz 安装失败!\n"; EXIT 1; }
+		fi
+	fi
+
 	mkdir -p /tmp/upx-${upx_latest_ver}-${Arch_upx}_linux
 	echo -e "正在解压 ${upx_name} ...\n" 
 	xz -d -c /tmp/upx-${upx_latest_ver}-${Arch_upx}_linux.tar.xz | tar -x -C "/tmp"
@@ -155,56 +166,83 @@ Update_Core(){
 }
 
 GET_Arch() {
-	Archt="$(opkg info kernel | grep Architecture | awk -F "[ _]" '{print($2)}')"
-	case "${Archt}" in
-	"i386")
-		Arch="386"
-		;;
-	"i686")
-		Arch="386"
-		;;
-	"x86")
-		Arch="amd64"
-		;;
-	"mipsel")
-		Arch="mipsle"
-	;;
-	"mips64el")
-		Arch="mips64le"
-		Arch="mipsle"
-		echo -e "mips64el use $Arch may have bug"
-	;;
-	"mips")
-		Arch="mips"
-	;;
-	"mips64")
-		Arch="mips64"
-		Arch="mips"
-		echo -e "mips64 use $Arch may have bug"
-	;;
-	"arm")
-		Arch="arm"
-		;;
-	"aarch64")
-		Arch="arm64"
-		;;
-	"powerpc")
-		Arch="ppc"
-		echo -e "error not support $Archt"
-		EXIT 1
-		;;
-	"powerpc64")
-		Arch="ppc64"
-		echo -e "error not support $Archt"
-		EXIT 1
-		;;
+    local raw_arch=""
 
-	*)
-		echo -e "error not support $Archt if you can use offical release please issue a bug"
-		EXIT 1
-		;;
-	esac
-        echo  "$Arch"
+    if command -v apk > /dev/null 2>&1; then
+        raw_arch=$(apk --print-arch 2>/dev/null)
+    fi
+
+    if [[ -z "$raw_arch" ]] && command -v opkg > /dev/null 2>&1; then
+        raw_arch=$(opkg info kernel 2>/dev/null | grep Architecture | awk -F "[ _]" '{print $2}')
+    fi
+
+    if [[ -z "$raw_arch" ]]; then
+        raw_arch=$(uname -m)
+    fi
+
+    raw_arch=$(echo "$raw_arch" | tr '[:upper:]' '[:lower:]' | sed 's/_.*//')
+
+    local Arch=""
+    case "${raw_arch}" in
+        "x86_64"|"amd64"|"x86")
+            Arch="amd64"
+            ;;
+        "i386"|"i486"|"i586"|"i686")
+            Arch="386"
+            ;;
+        "aarch64"|"arm64")
+            Arch="arm64"
+            ;;
+        "arm"|"armv7l"|"armv6l"|"armv5te"|"armv7"|"armv8")
+            Arch="arm"
+            ;;
+        "mipsel"|"mipsle")
+            Arch="mipsle"
+            ;;
+        "mips64el"|"mips64le")
+            Arch="mips64le"
+            ;;
+        "mips")
+            if [[ "$(echo -n I | od -to2 | awk '{print substr($2,6,1)}' 2>/dev/null)" == "1" ]]; then
+                Arch="mipsle"
+                echo -e "mips little endian detected, using mipsle (may have bug)" >&2
+            else
+                Arch="mips"
+                echo -e "mips big endian detected, using mips (may have bug)" >&2
+            fi
+            ;;
+        "mips64")
+            if [[ "$(echo -n I | od -to2 | awk '{print substr($2,6,1)}' 2>/dev/null)" == "1" ]]; then
+                Arch="mips64le"
+                echo -e "mips64 little endian detected, using mips64le (may have bug)" >&2
+            else
+                Arch="mips64"
+                echo -e "mips64 big endian detected, using mips64 (may have bug)" >&2
+            fi
+            ;;
+        "ppc"|"powerpc")
+            echo -e "error not support $raw_arch" >&2
+            EXIT 1
+            ;;
+        "ppc64"|"powerpc64")
+            if [[ "$(echo -n I | od -to2 | awk '{print substr($2,6,1)}' 2>/dev/null)" == "1" ]]; then
+                Arch="powerpc64le"
+                echo -e "ppc64 little endian detected, using powerpc64le" >&2
+            else
+                echo -e "error not support $raw_arch (big endian)" >&2
+                EXIT 1
+            fi
+            ;;
+        "ppc64le")
+            Arch="powerpc64le"
+            ;;
+        *)
+            echo -e "error not support architecture: ${raw_arch}" >&2
+            EXIT 1
+            ;;
+    esac
+
+    echo "$Arch"
 }
 
 EXIT(){
